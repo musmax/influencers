@@ -6,8 +6,10 @@ import user from '../models/user.js';
 import v2iu from '../models/instagram/user.js'
 import v2tu from '../models/tiktok/user.js';
 import v2yu from '../models/youtube/user.js';
+import v2tma from '../models/tiktok/archive/media.js'
+import v2yma from '../models/youtube/archive/media.js'
 
-export async function newDashboard(req, res) {
+const dashboard =  async function newDashboard(req, res) {
     logger.info("/dashboard accessed.");
 
     // lets get the users across board
@@ -18,7 +20,6 @@ export async function newDashboard(req, res) {
     let influencerDataArray = await Promise.all(
         allUsers.map(async (index) => {
             const { username, tiktok, instagram, youtube } = index;
-            console.log(username)
             // Query for the individual Instagram user in Mongoose
         const individualInstagram = await v2iua.findOne({
             $or: [
@@ -148,9 +149,7 @@ export async function newDashboard(req, res) {
     
     // Calculate the total
     const totalInfluencersProfile = instagramCount + youtubeCount + tiktokCount;
-    
-    console.log(totalInfluencersProfile);
-  
+      
     let instagramUsers = await v2iua.aggregate([
         {
           $group: {
@@ -180,7 +179,6 @@ export async function newDashboard(req, res) {
       ]);       
 
     let instagramMediaArray = instagramUsers.map((instagramUser) => instagramUser.stats.media);
-    console.log(instagramMediaArray);
     let totalInstagramMedia = instagramMediaArray.reduce((counter,initial) => counter + initial, 0);
     
     let youtubeMediaArray = youtubeUsers.map((youtubeUser) => youtubeUser.stats.media);
@@ -191,18 +189,111 @@ export async function newDashboard(req, res) {
 
     const totalMedia = totalInstagramMedia + totalYoutubeMedia + totalTiktokMedia;
 
+    // lets now break this down further by using fetched date month
+
     let instagramFollowerArray = instagramUsers.map((instagramUser) => instagramUser.stats?.followers || 0);
     let totalInstagramFollower = instagramFollowerArray.reduce((counter,initial) => counter + (initial || 0), 0);
     
     let youtubeFollowersArray = youtubeUsers.map((youtubeUser) => youtubeUser.stats?.followers || 0);
     let totalYoutubeFollower = youtubeFollowersArray.reduce((counter, current) => counter + (current || 0), 0);
     
-
     let tiktokFollowersArray = tiktokUsers.map((tiktokUser) => tiktokUser.stats?.followers || 0);
     let totalTiktokFollower = tiktokFollowersArray.reduce((counter,initial) => counter + (initial || 0), 0);
 
     const totalFollowers = totalInstagramFollower + totalYoutubeFollower + totalTiktokFollower;
 
+    // Aggregate Instagram unique media by month based on unique username
+// Aggregate Instagram unique media by month based on unique username
+let instagramMediaByMonth = await v2iua.aggregate([
+    {
+        $group: {
+            _id: {
+                month: { $month: "$fetched" },
+                username: "$username" // Group by username and month
+            },
+            totalInstagramMedia: { $max: "$stats.media" } // Ensure we're taking max media per user
+        }
+    },
+    {
+        $group: {
+            _id: "$_id.month", // Now group by month alone
+            instagram: { $sum: "$totalInstagramMedia" } // Sum unique media per month
+        }
+    },
+    {
+        $project: {
+            _id: 0,
+            month: "$_id", // Project the month field
+            instagram: 1 // Include Instagram count
+        }
+    }
+]);
+
+// Similar aggregation for YouTube
+let youtubeMediaByMonth = await v2yua.aggregate([
+    {
+        $group: {
+            _id: {
+                month: { $month: "$fetched" },
+                username: "$username"
+            },
+            totalYouTubeMedia: { $max: "$stats.media" } // Use max media per user to avoid duplication
+        }
+    },
+    {
+        $group: {
+            _id: "$_id.month",
+            youtube: { $sum: "$totalYouTubeMedia" }
+        }
+    },
+    {
+        $project: {
+            _id: 0,
+            month: "$_id",
+            youtube: 1
+        }
+    }
+]);
+
+// TikTok aggregation
+let tiktokMediaByMonth = await v2tua.aggregate([
+    {
+        $group: {
+            _id: {
+                month: { $month: "$fetched" },
+                username: "$username"
+            },
+            totalTikTokMedia: { $max: "$stats.media" }
+        }
+    },
+    {
+        $group: {
+            _id: "$_id.month",
+            tiktok: { $sum: "$totalTikTokMedia" }
+        }
+    },
+    {
+        $project: {
+            _id: 0,
+            month: "$_id",
+            tiktok: 1
+        }
+    }
+]);
+
+    // Combine results into one array based on month
+    let combinedMediaByMonth = instagramMediaByMonth.map((instagramData) => {
+        let youtubeData = youtubeMediaByMonth.find(y => y.month === instagramData.month) || { youtube: 0 };
+        let tiktokData = tiktokMediaByMonth.find(t => t.month === instagramData.month) || { tiktok: 0 };
+
+        return {
+            month: instagramData.month,
+            instagram: instagramData.instagram,
+            youtube: youtubeData.youtube,
+            tiktok: tiktokData.tiktok
+        };
+    });
+            
         let dataDashboard = {
             totalInfluencersAcrossPlatform: totalInfluencers,
             totalInfluencersProfileAcrossPlatform: {
@@ -216,6 +307,7 @@ export async function newDashboard(req, res) {
                 youtube: totalYoutubeMedia,
                 tiktok: totalTiktokMedia,
                 total: totalMedia,
+                monthlyBreakdown: combinedMediaByMonth
             },
             totalFollowersAcrossPlatform: {
                 instagram: totalInstagramFollower,
@@ -233,4 +325,130 @@ export async function newDashboard(req, res) {
     
 }
 
-export default { newDashboard };
+const likes = async function filteringBasedOnLikes(req, res) {
+    const { mixed, youtube, instagram, tiktok } = req.query;
+
+    if (tiktok) {
+        const topLikedVideosInfluencersForTiktok = await v2tma.aggregate([
+            // Group by username and sum the total likes for each user
+            {
+                $group: {
+                    _id: "$user.username",
+                    name: { $first: "$user.full_name" }, // Get the full name
+                    totalLikes: { $sum: "$stats.likes" } // Sum the likes for each user
+                }
+            },
+            // Sort by total likes in descending order
+            { $sort: { totalLikes: -1 } },
+            // Limit the result to the top 3 users
+            { $limit: 3 },
+        ]);
+
+        const totalLikes = await v2tma.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    totalLikesSum: { $sum: "$stats.likes" }
+                }
+            }
+        ]);
+
+        // Add percentage calculation
+        const topThreeTiktokers = topLikedVideosInfluencersForTiktok.map(influencer => ({
+            name: influencer.name,
+            percentage: `${((influencer.totalLikes / totalLikes[0].totalLikesSum) * 100).toFixed(2)}%`
+        }));
+
+        return res.status(200).json({
+            message: 'success',
+            data: { topThreeTiktoker: topThreeTiktokers }
+        });
+    }
+
+    if (youtube) {
+        const topLikedVideosInfluencersForYoutube = await v2yma.aggregate([
+            // Group by username and sum the total likes for each user
+            {
+                $group: {
+                    _id: "$user.username",
+                    name: { $first: "$user.full_name" }, // Get the full name
+                    totalLikes: { $sum: "$stats.likes" } // Sum the likes for each user
+                }
+            },
+            // Sort by total likes in descending order
+            { $sort: { totalLikes: -1 } },
+            // Limit the result to the top 3 users
+            { $limit: 3 },
+        ]);
+
+        const totalLikes = await v2yma.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    totalLikesSum: { $sum: "$stats.likes" }
+                }
+            }
+        ]);
+
+        // Add percentage calculation
+        const topThreeYoutubers = topLikedVideosInfluencersForYoutube.map(influencer => ({
+            name: influencer.name,
+            percentage: `${((influencer.totalLikes / totalLikes[0].totalLikesSum) * 100).toFixed(2)}%`
+        }));
+
+        return res.status(200).json({
+            message: 'success',
+            data: { topThreeYoutuber: topThreeYoutubers }
+        });
+    }
+
+    if (instagram) {
+        return res.status(200).json({
+            message: 'Instagram functionality not implemented yet',
+            data: null
+        });
+    }
+
+    // If no specific platform is passed, fetch the most liked for TikTok and YouTube
+    const mostLikedTiktok = await v2tma.aggregate([
+        {
+            $group: {
+                _id: "$user.username",
+                name: { $first: "$user.full_name" },
+                totalLikes: { $sum: "$stats.likes" }
+            }
+        },
+        { $sort: { totalLikes: -1 } },
+        { $limit: 1 },
+    ]);
+
+    const mostLikedYoutube = await v2yma.aggregate([
+        {
+            $group: {
+                _id: "$user.username",
+                name: { $first: "$user.full_name" },
+                totalLikes: { $sum: "$stats.likes" }
+            }
+        },
+        { $sort: { totalLikes: -1 } },
+        { $limit: 1 },
+    ]);
+
+    const returnResponse = {
+        mostLikedTiktoker: mostLikedTiktok[0] || null,
+        mostLikedYoutuber: mostLikedYoutube[0] || null,
+        mostLikedInstagram: null, // Instagram logic can be added here later
+    };
+
+    return res.status(200).json({
+        message: 'success',
+        data: returnResponse
+    });
+};
+
+
+export  {
+    dashboard,
+    likes
+}
+
