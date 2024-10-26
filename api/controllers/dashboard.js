@@ -21,7 +21,7 @@ const dashboard =  async function newDashboard(req, res) {
         allUsers.map(async (index) => {
             const { username, tiktok, instagram, youtube } = index;
             // Query for the individual Instagram user in Mongoose
-        const individualInstagram = await v2iua.findOne({
+            const individualInstagram = await v2iu.findOne({
             $or: [
                 { username: username }, 
                 { username: tiktok }, 
@@ -77,36 +77,144 @@ const dashboard =  async function newDashboard(req, res) {
             // let sum it up
             const sumUserMediaFollower = filteredUserMediaFollowerArray.reduce((a, b) => a+b, 0);
 
-            let induvidualData = {
-                name: username,
-                profileImage: individualInstagram && individualInstagram.picture 
-                    ? individualInstagram.picture 
-                    : individualTiktok && individualTiktok.picture
-                    ? individualTiktok.picture
-                    : individualYoutube && individualYoutube.picture
-                    ? individualYoutube.picture
-                    : null,
-                activePlatforms: {
-                    instagram: isUserActiveOnInstagram,
-                    tiktok: isUserActiveOnTiktok,
-                    youtube: isUserActiveOnYoutube
-                },
-                uploadedMedia: {
-                    instagram: totalUserInstagramUpload,
-                    tiktok: totalUserTiktokUpload,
-                    youtube: totalUserYoutubeUpload,
-                    total:sumUserMediaUpload
-                },
-                followers: {
-                    instagram: totalUserInstagramFollower,
-                    tiktok: totalUserTiktokFollower,
-                    youtube: totalUserYoutubeFollower,
-                    total: sumUserMediaFollower
-                },
-            };     
-            return induvidualData;       
-        })
-    );
+    // lets handle weekly upload per user
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+        const youtubeWeeklyUploads = await v2yu.aggregate([
+        {
+            $match: {
+            "media.uploaded": { $gte: oneWeekAgo }
+            }
+        },
+        {
+            $project: {
+            userId: 1,
+            username: 1,
+            weeklyMediaUploads: {
+                $filter: {
+                input: "$media",
+                as: "mediaItem",
+                cond: { $gte: ["$$mediaItem.uploaded", oneWeekAgo] }
+                }
+            }
+            }
+        },
+        {
+            $addFields: {
+            totalWeeklyMediaUploads: { $size: "$weeklyMediaUploads" }
+            }
+        },
+        {
+            $project: {
+            username: 1,
+            totalWeeklyMediaUploads: 1
+            }
+        }
+        ]);
+        const instagramWeeklyUploads = await v2iu.aggregate([
+        {
+            $match: {
+            "media.uploaded": { $gte: oneWeekAgo }
+            }
+        },
+        {
+            $project: {
+            userId: 1,
+            username: 1,
+            weeklyMediaUploads: {
+                $filter: {
+                input: "$media",
+                as: "mediaItem",
+                cond: { $gte: ["$$mediaItem.uploaded", oneWeekAgo] }
+                }
+            }
+            }
+        },
+        {
+            $addFields: {
+            totalWeeklyMediaUploads: { $size: "$weeklyMediaUploads" }
+            }
+        },
+        {
+            $project: {
+            username: 1,
+            totalWeeklyMediaUploads: 1
+            }
+        }
+        ]);
+        const tiktokWeeklyUploads = await v2tu.aggregate([
+        {
+            $match: {
+            "media.uploaded": { $gte: oneWeekAgo }
+            }
+        },
+        {
+            $project: {
+            userId: 1,
+            username: 1,
+            weeklyMediaUploads: {
+                $filter: {
+                input: "$media",
+                as: "mediaItem",
+                cond: { $gte: ["$$mediaItem.uploaded", oneWeekAgo] }
+                }
+            }
+            }
+        },
+        {
+            $addFields: {
+            totalWeeklyMediaUploads: { $size: "$weeklyMediaUploads" }
+            }
+        },
+        {
+            $project: {
+            username: 1,
+            totalWeeklyMediaUploads: 1
+            }
+        }
+        ]);
+
+                let induvidualData = {
+                    name: username,
+                    profileImage: individualInstagram && individualInstagram.picture 
+                        ? individualInstagram.picture 
+                        : individualTiktok && individualTiktok.picture
+                        ? individualTiktok.picture
+                        : individualYoutube && individualYoutube.picture
+                        ? individualYoutube.picture
+                        : null,
+                    activePlatforms: {
+                        instagram: isUserActiveOnInstagram,
+                        tiktok: isUserActiveOnTiktok,
+                        youtube: isUserActiveOnYoutube
+                    },
+                    uploadedMedia: {
+                        instagram: totalUserInstagramUpload,
+                        tiktok: totalUserTiktokUpload,
+                        youtube: totalUserYoutubeUpload,
+                        total:sumUserMediaUpload
+                    },
+                    followers: {
+                        instagram: totalUserInstagramFollower,
+                        tiktok: totalUserTiktokFollower,
+                        youtube: totalUserYoutubeFollower,
+                        total: sumUserMediaFollower
+                    },
+                    weeklyMediaUploads: {
+                        youtube: youtubeWeeklyUploads.length > 0 ? youtubeWeeklyUploads[0].totalWeeklyMediaUploads : 0,
+                        instagram: instagramWeeklyUploads.length > 0 ? instagramWeeklyUploads[0].totalWeeklyMediaUploads : 0,
+                        tiktok: tiktokWeeklyUploads.length > 0 ? tiktokWeeklyUploads[0].totalWeeklyMediaUploads : 0
+                    },
+                    weeklySubscribers: {
+                        youtube: youtubeWeeklyUploads.length > 0 ? youtubeWeeklyUploads[0].totalWeeklyMediaUploads : 0,
+                        instagram: instagramWeeklyUploads.length > 0 ? instagramWeeklyUploads[0].totalWeeklyMediaUploads : 0,
+                        tiktok: tiktokWeeklyUploads.length > 0 ? tiktokWeeklyUploads[0].totalWeeklyMediaUploads : 0
+                    },
+                };     
+                return induvidualData;       
+            })
+        );
     
     // Get the count of documents for each platform profile
     let instagramInfluencersProfile = await v2iua.aggregate([
@@ -341,7 +449,7 @@ const likes = async function filteringBasedOnLikes(req, res) {
             // Sort by total likes in descending order
             { $sort: { totalLikes: -1 } },
             // Limit the result to the top 3 users
-            { $limit: 3 },
+            { $limit: 6 },
         ]);
 
         const totalLikes = await v2tma.aggregate([
@@ -361,7 +469,7 @@ const likes = async function filteringBasedOnLikes(req, res) {
 
         return res.status(200).json({
             message: 'success',
-            data: { topThreeTiktoker: topThreeTiktokers }
+            data: { topSixTiktoker: topThreeTiktokers }
         });
     }
 
@@ -378,7 +486,7 @@ const likes = async function filteringBasedOnLikes(req, res) {
             // Sort by total likes in descending order
             { $sort: { totalLikes: -1 } },
             // Limit the result to the top 3 users
-            { $limit: 3 },
+            { $limit: 6 },
         ]);
 
         const totalLikes = await v2yma.aggregate([
@@ -419,7 +527,7 @@ const likes = async function filteringBasedOnLikes(req, res) {
             }
         },
         { $sort: { totalLikes: -1 } },
-        { $limit: 1 },
+        { $limit: 2 },
     ]);
 
     const mostLikedYoutube = await v2yma.aggregate([
@@ -431,13 +539,13 @@ const likes = async function filteringBasedOnLikes(req, res) {
             }
         },
         { $sort: { totalLikes: -1 } },
-        { $limit: 1 },
+        { $limit: 2 },
     ]);
 
     const returnResponse = {
-        mostLikedTiktoker: mostLikedTiktok[0] || null,
+        mostLikedTiktoker: mostLikedTiktok || null,
         mostLikedYoutuber: mostLikedYoutube[0] || null,
-        mostLikedInstagram: null, // Instagram logic can be added here later
+        mostLikedInstagram: null,
     };
 
     return res.status(200).json({
